@@ -689,6 +689,91 @@
         showToast(`Imported ${added} voters (${skipped} duplicates skipped).`, 'success');
     }
 
+    function importNominees(csvText) {
+        const lines = csvText.split(/\r?\n/).filter(line => line.trim() !== '');
+        if (lines.length === 0) {
+            showToast('CSV is empty.', 'error');
+            return;
+        }
+        let added = 0,
+            skipped = 0;
+        let startIdx = 0;
+        const first = lines[0].toLowerCase();
+        if (first.includes('name') && first.includes('category')) {
+            startIdx = 1;
+        }
+        for (let i = startIdx; i < lines.length; i++) {
+            const parts = lines[i].split(',').map(s => s.trim());
+            if (parts.length < 2) continue;
+            const name = parts[0];
+            const categoryId = parts[1];
+            const photo = parts[2] || '';
+            const problems = parts[3] || '';
+            const whyMe = parts[4] || '';
+            
+            if (!name || !categoryId) continue;
+            
+            // Check if category exists
+            const category = getCategoryById(categoryId);
+            if (!category) {
+                showToast(`Category "${categoryId}" not found. Skipping "${name}".`, 'error');
+                skipped++;
+                continue;
+            }
+            
+            // Check for duplicate
+            if (appData.nominees.some(n => n.name.toLowerCase() === name.toLowerCase() && n.categoryId === categoryId)) {
+                skipped++;
+                continue;
+            }
+            
+            appData.nominees.push({
+                id: generateId(),
+                name: name,
+                categoryId: categoryId,
+                photo: photo,
+                manifesto: {
+                    problems: problems,
+                    promises: problems,
+                    whyMe: whyMe
+                }
+            });
+            // Initialize results for this nominee
+            if (!appData.results[categoryId]) {
+                appData.results[categoryId] = {};
+            }
+            appData.results[categoryId][appData.nominees[appData.nominees.length - 1].id] = 0;
+            added++;
+        }
+        saveData();
+        renderAllSettings();
+        showToast(`Imported ${added} nominees (${skipped} duplicates skipped).`, 'success');
+    }
+
+    function exportNominees() {
+        if (appData.nominees.length === 0) {
+            showToast('No nominees to export.', 'error');
+            return;
+        }
+        let csv = 'name,categoryId,photoUrl,problems,whyMe\n';
+        for (const n of appData.nominees) {
+            const cat = getCategoryById(n.categoryId);
+            const catId = cat ? cat.id : n.categoryId;
+            const photo = n.photo || '';
+            const problems = (n.manifesto?.problems || '').replace(/,/g, ' ');
+            const whyMe = (n.manifesto?.whyMe || '').replace(/,/g, ' ');
+            csv += `${n.name},${catId},${photo},${problems},${whyMe}\n`;
+        }
+        const blob = new Blob([csv], { type: 'text/csv' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `nominees_${new Date().toISOString().slice(0,10)}.csv`;
+        a.click();
+        URL.revokeObjectURL(url);
+        showToast('Nominees exported.', 'success');
+    }
+
     function clearAllVoters() {
         if (!confirm('Remove all voters? This will also clear all votes.')) return;
         appData.voters = [];
@@ -1297,6 +1382,61 @@
         });
 
         document.getElementById('clearVotersBtn').addEventListener('click', clearAllVoters);
+
+        // ─── Settings: Nominees CSV Import/Export ───
+        const nomineeDropArea = document.getElementById('nomineeCsvDropArea');
+        const nomineeFileInput = document.getElementById('nomineeCsvFileInput');
+
+        nomineeDropArea.addEventListener('click', () => nomineeFileInput.click());
+        nomineeDropArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            nomineeDropArea.style.borderColor = 'var(--primary)';
+            nomineeDropArea.style.background = '#e8f0fe';
+        });
+        nomineeDropArea.addEventListener('dragleave', () => {
+            nomineeDropArea.style.borderColor = '#dce3ec';
+            nomineeDropArea.style.background = '#fafcfe';
+        });
+        nomineeDropArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            nomineeDropArea.style.borderColor = '#dce3ec';
+            nomineeDropArea.style.background = '#fafcfe';
+            if (e.dataTransfer.files.length > 0) {
+                nomineeFileInput.files = e.dataTransfer.files;
+                handleNomineeCsvFile(e.dataTransfer.files[0]);
+            }
+        });
+        nomineeFileInput.addEventListener('change', function() {
+            if (this.files.length > 0) {
+                handleNomineeCsvFile(this.files[0]);
+            }
+            this.value = '';
+        });
+
+        async function handleNomineeCsvFile(file) {
+            try {
+                const text = await file.text();
+                importNominees(text);
+            } catch (_) {
+                showToast('Failed to read file.', 'error');
+            }
+        }
+
+        document.getElementById('sampleNomineeCsvBtn').addEventListener('click', function() {
+            const sample = `name,categoryId,photoUrl,problems,whyMe
+Alex Johnson,head_boy,https://example.com/photo.jpg,Improve school facilities,I am dedicated and experienced
+Emma Williams,head_girl,,Promote student wellness,I care about every student
+James Rodriguez,deputy_head_boy,,Organize better events,I have great leadership skills`;
+            const blob = new Blob([sample], { type: 'text/csv' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'sample_nominees.csv';
+            a.click();
+            URL.revokeObjectURL(url);
+        });
+
+        document.getElementById('exportNomineesBtn').addEventListener('click', exportNominees);
 
         // ─── Settings: Results ───
         document.getElementById('publishResultsBtn').addEventListener('click', publishResults);
